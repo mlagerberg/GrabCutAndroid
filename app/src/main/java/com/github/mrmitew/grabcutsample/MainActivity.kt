@@ -2,6 +2,7 @@ package com.github.mrmitew.grabcutsample
 
 import android.Manifest
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.graphics.*
 import android.graphics.drawable.BitmapDrawable
@@ -118,6 +119,12 @@ class MainActivity : AppCompatActivity() {
             }
             true
         }
+
+        // Auto-load previous image
+        val uri = loadUri()
+        if (uri != null) {
+            loadPicture(uri)
+        }
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
@@ -139,17 +146,31 @@ class MainActivity : AppCompatActivity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent) {
         when (requestCode) {
             REQUEST_OPEN_IMAGE -> if (resultCode == Activity.RESULT_OK && data.data != null) {
-                val imgUri: Uri = data.data
-                val filePathColumn = arrayOf(MediaStore.Images.Media.DATA)
-                val cursor = contentResolver.query(imgUri, filePathColumn, null, null, null)
-                // TODO: Provide complex object that has both path and extension
-                currentPhotoPath = cursor.moveToFirst()
-                        .let { cursor.getString(cursor.getColumnIndex(filePathColumn[0])) }
-                        .also { cursor.close() }
-                bitmap = decodeBitmapFromFilePath(currentPhotoPath)
-                image.setImageBitmap(bitmap)
+                loadPicture(data.data)
             }
         }
+    }
+
+    private fun loadPicture(data: Uri) {
+        saveUri(data)
+        val imgUri: Uri = data
+        val filePathColumn = arrayOf(MediaStore.Images.Media.DATA)
+        val cursor = contentResolver.query(imgUri, filePathColumn, null, null, null)
+        // TODO: Provide complex object that has both path and extension
+        currentPhotoPath = cursor.moveToFirst()
+                .let { cursor.getString(cursor.getColumnIndex(filePathColumn[0])) }
+                .also { cursor.close() }
+        bitmap = decodeBitmapFromFilePath(currentPhotoPath)
+        image.setImageBitmap(bitmap)
+    }
+
+    private fun saveUri(data: Uri) {
+        getSharedPreferences("prefs", Context.MODE_PRIVATE).edit().putString("uri", data.toString()).apply()
+    }
+
+    private fun loadUri(): Uri? {
+        val str = getSharedPreferences("prefs", Context.MODE_PRIVATE).getString("uri", null) ?: return null
+        return Uri.parse(str)
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
