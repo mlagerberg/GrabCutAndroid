@@ -5,11 +5,11 @@ import android.app.Activity
 import android.content.Intent
 import android.graphics.*
 import android.graphics.drawable.BitmapDrawable
-import android.media.Image
 import android.net.Uri
 import android.os.Bundle
 import android.provider.MediaStore
 import android.support.v7.app.AppCompatActivity
+import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
 import android.view.MotionEvent
@@ -17,7 +17,6 @@ import android.view.View.GONE
 import android.view.View.VISIBLE
 import android.widget.ImageView
 import android.widget.Toast
-import com.github.mrmitew.grabcutsample.R.id.top
 import com.tbruyelle.rxpermissions2.RxPermissions
 import io.reactivex.Single
 import io.reactivex.android.schedulers.AndroidSchedulers
@@ -43,11 +42,18 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val coordinates: Coordinates = Coordinates(Point(-1.0, -1.0), Point(-1.0, -1.0))
+    private var coordinates: ArrayList<Point>? = null
     private val disposables = CompositeDisposable()
     private var currentPhotoPath: String = ""
     private lateinit var rxPermissions: RxPermissions
     private lateinit var bitmap: Bitmap
+    private lateinit var paint: Paint
+    private lateinit var path: Path
+    private var left: Float = 0f
+    private var right: Float = 0f
+    private var top: Float = 0f
+    private var bottom: Float = 0f
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,40 +63,58 @@ class MainActivity : AppCompatActivity() {
 
         rxPermissions = RxPermissions(this)
 
+        paint = Paint()
+        paint.color = Color.BLACK
+        paint.isAntiAlias = true
+        paint.strokeWidth = 15f
+        paint.style = Paint.Style.STROKE
+        paint.pathEffect = null
+        paint.strokeCap = Paint.Cap.ROUND
+        paint.strokeJoin = Paint.Join.ROUND
+
         image.setOnTouchListener { _, event ->
             if (!isPhotoChosen()) {
                 return@setOnTouchListener false
             }
-            if (event.action == MotionEvent.ACTION_DOWN) {
-                val bounds = getBitmapPositionInsideImageView(image)
-                val xScaled = (event.x / bounds[4]) - bounds[0]
-                val yScaled = (event.y / bounds[5]) - bounds[1]
-                if (!hasChosenTopLeft()) {
-                    coordinates.first.apply {
-                        x = xScaled.toDouble()
-                        y = yScaled.toDouble()
-                    }
-                } else if (!hasChosenBottomRight()) {
-                    with(Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.RGB_565)) {
-                        coordinates.second.apply {
-                            x = xScaled.toDouble()
-                            y = yScaled.toDouble()
-                        }
-                        val rectPaint = Paint().apply {
-                            setARGB(255, 255, 0, 0)
-                            style = Paint.Style.STROKE
-                            strokeWidth = 3f
-                        }
-                        Canvas(this).apply {
-                            drawBitmap(bitmap, 0f, 0f, null)
-                            drawRect(RectF(coordinates.first.x.toFloat(), coordinates.first.y.toFloat(), coordinates.second.x.toFloat(), coordinates.second.y.toFloat()), rectPaint)
-                        }
-                        image.setImageDrawable(BitmapDrawable(resources, this))
-                    }
 
-                } else {
-                    resetTarget()
+            val bounds = getBitmapPositionInsideImageView(image)
+            val xScaled = (event.x / bounds[4]) - bounds[0]
+            val yScaled = (event.y / bounds[5]) - bounds[1]
+            when {
+                event.action == MotionEvent.ACTION_DOWN -> {
+                    if (coordinates == null) {
+                        coordinates = ArrayList()
+                        coordinates!!.add(Point(xScaled.toDouble(), yScaled.toDouble()))
+                        path = Path()
+                        path.moveTo(xScaled, yScaled)
+                        top = yScaled
+                        bottom = yScaled
+                        right = xScaled
+                        left = xScaled
+                    }
                 }
+                event.action == MotionEvent.ACTION_MOVE -> {
+                    Log.v("grabcut", "Dragging $xScaled, $yScaled")
+                    coordinates?.add(Point(xScaled.toDouble(), yScaled.toDouble()))
+                    path.lineTo(xScaled, yScaled)
+                    left = Math.min(xScaled, left)
+                    right = Math.max(xScaled, right)
+                    top = Math.min(xScaled, top)
+                    bottom = Math.max(xScaled, bottom)
+                }
+                event.action == MotionEvent.ACTION_UP -> {
+                    path.close()
+                    startCutting()
+                }
+            }
+
+            // TODO move this to the ondraw of the view, instead of re-creating a new bitmap every time
+            with(Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.RGB_565)) {
+                Canvas(this).apply {
+                    drawBitmap(bitmap, 0f, 0f, null)
+                    drawPath(path, paint)
+                }
+                image.setImageDrawable(BitmapDrawable(resources, this))
             }
             true
         }
@@ -153,24 +177,28 @@ class MainActivity : AppCompatActivity() {
                 return true
             }
             R.id.action_cut_image -> {
-                if (isPhotoChosen() && isTargetChosen()) {
-                    Single.fromCallable { extractForegroundFromBackground(coordinates, currentPhotoPath) }
-                            .subscribeOn(Schedulers.computation())
-                            .observeOn(AndroidSchedulers.mainThread())
-                            .doOnSubscribe { vg_loading.visibility = VISIBLE }
-                            .doOnSuccess { displayResult(it) }
-                            .doFinally {
-                                resetTargetCoordinates()
-                                vg_loading.visibility = GONE
-                            }
-                            .subscribe()
-                            .addTo(disposables)
-                }
+                startCutting()
                 return true
             }
         }
 
         return super.onOptionsItemSelected(item)
+    }
+
+    private fun startCutting() {
+        if (isPhotoChosen() && isTargetChosen()) {
+            Single.fromCallable { extractForegroundFromBackground(coordinates!!, currentPhotoPath) }
+                    .subscribeOn(Schedulers.computation())
+                    .observeOn(AndroidSchedulers.mainThread())
+                    .doOnSubscribe { vg_loading.visibility = VISIBLE }
+                    .doOnSuccess { displayResult(it) }
+                    .doFinally {
+                        resetTargetCoordinates()
+                        vg_loading.visibility = GONE
+                    }
+                    .subscribe()
+                    .addTo(disposables)
+        }
     }
 
     private fun resetTarget() {
@@ -179,19 +207,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun resetTargetCoordinates() {
-        coordinates.apply {
-            first.apply { x = -1.0; y = -1.0 }
-            second.apply { x = -1.0; y = -1.0 }
-        }
+        coordinates = null
     }
 
     private fun isPhotoChosen() = currentPhotoPath.isNotBlank()
 
-    private fun isTargetChosen() = coordinates.first.x != -1.0 && coordinates.first.y != -1.0 &&
-            coordinates.second.x != -1.0 && coordinates.second.y != -1.0
+    private fun isTargetChosen() = coordinates != null && coordinates!!.isNotEmpty()
 
-    private fun hasChosenTopLeft() = coordinates.first.x != -1.0 && coordinates.first.y != -1.0
-    private fun hasChosenBottomRight() = coordinates.second.x != -1.0 && coordinates.second.y != -1.0
+//    private fun hasChosenTopLeft() = coordinates.first.x != -1.0 && coordinates.first.y != -1.0
+//    private fun hasChosenBottomRight() = coordinates.second.x != -1.0 && coordinates.second.y != -1.0
 
     private fun displayResult(currentPhotoPath: String) {
         // TODO: Provide complex object that has both path and extension
@@ -203,7 +227,8 @@ class MainActivity : AppCompatActivity() {
             invalidate()
         }
     }
-    private fun extractForegroundFromBackground(coordinates: Coordinates, currentPhotoPath: String): String {
+
+    private fun extractForegroundFromBackground(coordinates: ArrayList<Point>, currentPhotoPath: String): String {
         // TODO: Provide complex object that has both path and extension
 
         // Matrices that OpenCV will be using internally
@@ -217,7 +242,7 @@ class MainActivity : AppCompatActivity() {
         val firstMask = Mat()
 
         val source = Mat(1, 1, CvType.CV_8U, Scalar(Imgproc.GC_PR_FGD.toDouble()))
-        val rect = Rect(coordinates.first, coordinates.second)
+        val rect = Rect(Point(0.0, 0.0), Point(10.0, 10.0)) // FIXME coordinates.first, coordinates.second)
 
         // Run the grab cut algorithm with a rectangle (for subsequent iterations with touch-up strokes,
         // flag should be Imgproc.GC_INIT_WITH_MASK)
@@ -237,7 +262,11 @@ class MainActivity : AppCompatActivity() {
         // Create a red color
         val color = Scalar(255.0, 0.0, 0.0, 255.0)
         // Draw a rectangle using the coordinates of the bounding box that surrounds the foreground
-        Imgproc.rectangle(srcImage, coordinates.first, coordinates.second, color)
+        // FIXME
+        Imgproc.rectangle(srcImage,
+                Point(left.toDouble(), top.toDouble()),
+                Point(right.toDouble(), bottom.toDouble()),
+                color)
 
         // Create a new matrix to represent the background, filled with white color
         val background = Mat(srcImage.size(), CvType.CV_8UC3, Scalar(255.0, 255.0, 255.0))
