@@ -43,7 +43,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private var coordinates: ArrayList<Point>? = null
+    private var coordinates: ArrayList<MatOfPoint>? = null
     private val disposables = CompositeDisposable()
     private var currentPhotoPath: String = ""
     private lateinit var rxPermissions: RxPermissions
@@ -85,7 +85,7 @@ class MainActivity : AppCompatActivity() {
                 event.action == MotionEvent.ACTION_DOWN -> {
                     if (coordinates == null) {
                         coordinates = ArrayList()
-                        coordinates!!.add(Point(xScaled.toDouble(), yScaled.toDouble()))
+                        coordinates!!.add(MatOfPoint(Point(xScaled.toDouble(), yScaled.toDouble())))
                         path = Path()
                         path.moveTo(xScaled, yScaled)
                         top = yScaled
@@ -96,7 +96,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 event.action == MotionEvent.ACTION_MOVE -> {
                     Log.v("grabcut", "Dragging $xScaled, $yScaled")
-                    coordinates?.add(Point(xScaled.toDouble(), yScaled.toDouble()))
+                    coordinates?.add(MatOfPoint(Point(xScaled.toDouble(), yScaled.toDouble())))
                     path.lineTo(xScaled, yScaled)
                     left = Math.min(xScaled, left)
                     right = Math.max(xScaled, right)
@@ -123,7 +123,8 @@ class MainActivity : AppCompatActivity() {
         // Auto-load previous image
         val uri = loadUri()
         if (uri != null) {
-            loadPicture(uri)
+            // FIXME: disabled, permission error
+            // loadPicture(uri)
         }
     }
 
@@ -235,9 +236,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun isTargetChosen() = coordinates != null && coordinates!!.isNotEmpty()
 
-//    private fun hasChosenTopLeft() = coordinates.first.x != -1.0 && coordinates.first.y != -1.0
-//    private fun hasChosenBottomRight() = coordinates.second.x != -1.0 && coordinates.second.y != -1.0
-
     private fun displayResult(currentPhotoPath: String) {
         // TODO: Provide complex object that has both path and extension
         image.apply {
@@ -249,8 +247,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun extractForegroundFromBackground(coordinates: ArrayList<Point>, currentPhotoPath: String): String {
+    private fun extractForegroundFromBackground(coordinates: ArrayList<MatOfPoint>, currentPhotoPath: String): String {
         // TODO: Provide complex object that has both path and extension
+
+        val startTime = System.currentTimeMillis()
 
         // Matrices that OpenCV will be using internally
         val bgModel = Mat()
@@ -260,14 +260,22 @@ class MainActivity : AppCompatActivity() {
         val iterations = 5
 
         // Mask image where we specify which areas are background, foreground or probable background/foreground
-        val firstMask = Mat()
+        val firstMask = Mat(
+                Size(srcImage.cols().toDouble(), srcImage.rows().toDouble()),
+                CvType.CV_8UC1)
+        // Fill mask with 'background'
+        Imgproc.rectangle(firstMask, Point(0.0, 0.0), Point(firstMask.cols().toDouble(), firstMask.rows().toDouble()), Scalar(Imgproc.GC_BGD.toDouble()))
+        // Draw the polygon, as 'probably foreground'
+        Imgproc.polylines(firstMask, coordinates, true, Scalar(Imgproc.GC_PR_FGD.toDouble()))
 
         val source = Mat(1, 1, CvType.CV_8U, Scalar(Imgproc.GC_PR_FGD.toDouble()))
-        val rect = Rect(Point(0.0, 0.0), Point(10.0, 10.0)) // FIXME coordinates.first, coordinates.second)
+        val rect = Rect(
+                Point(left.toDouble(), top.toDouble()),
+                Point(right.toDouble(), bottom.toDouble()))
 
         // Run the grab cut algorithm with a rectangle (for subsequent iterations with touch-up strokes,
         // flag should be Imgproc.GC_INIT_WITH_MASK)
-        Imgproc.grabCut(srcImage, firstMask, rect, bgModel, fgModel, iterations, Imgproc.GC_INIT_WITH_RECT)
+        Imgproc.grabCut(srcImage, firstMask, rect, bgModel, fgModel, iterations, Imgproc.GC_INIT_WITH_MASK)
 
         // Create a matrix of 0s and 1s, indicating whether individual pixels are equal
         // or different between "firstMask" and "source" objects
@@ -283,7 +291,6 @@ class MainActivity : AppCompatActivity() {
         // Create a red color
         val color = Scalar(255.0, 0.0, 0.0, 255.0)
         // Draw a rectangle using the coordinates of the bounding box that surrounds the foreground
-        // FIXME
         Imgproc.rectangle(srcImage,
                 Point(left.toDouble(), top.toDouble()),
                 Point(right.toDouble(), bottom.toDouble()),
@@ -313,6 +320,7 @@ class MainActivity : AppCompatActivity() {
 
         // Save the final image to storage
         Imgcodecs.imwrite(currentPhotoPath + "_tmp.jpg", dst)
+//        Imgcodecs.imwrite(currentPhotoPath + "_tmp.jpg", firstMask)
 
         // Clean up used resources
         firstMask.release()
@@ -321,6 +329,9 @@ class MainActivity : AppCompatActivity() {
         fgModel.release()
         vals.release()
         dst.release()
+
+        val endTime = System.currentTimeMillis()
+        Log.w("grabcut", "Operation took " + ((endTime - startTime) / 1000) + "s")
 
         return currentPhotoPath
     }

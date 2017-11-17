@@ -1,6 +1,8 @@
 # GrabCutAndroid
 A dummy app that demonstrates foreground-background segmentation using the GrabCut algorithm in Android using OpenCV.
 
+**This is a work in progress that attempts to use a polygon outline as a mask instead of only a rectangle, for increased accuracy. For a working version that uses only a rectangle, check [the original](https://github.com/mrmitew/GrabCutAndroid).
+
 ## Project dependencies:
 - Kotlin 1.51.1
 - OpenCV 3.3.1
