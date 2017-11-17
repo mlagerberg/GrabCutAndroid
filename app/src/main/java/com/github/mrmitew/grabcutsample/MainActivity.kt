@@ -2,7 +2,6 @@ package com.github.mrmitew.grabcutsample
 
 import android.Manifest
 import android.app.Activity
-import android.content.Context
 import android.content.Intent
 import android.graphics.*
 import android.graphics.drawable.BitmapDrawable
@@ -31,12 +30,17 @@ import org.opencv.core.Point
 import org.opencv.core.Rect
 import org.opencv.imgcodecs.Imgcodecs
 import org.opencv.imgproc.Imgproc
+import java.io.File
+import java.io.FileOutputStream
 
 
 typealias Coordinates = Pair<Point, Point>
 class MainActivity : AppCompatActivity() {
+
     companion object {
         val REQUEST_OPEN_IMAGE = 1337
+        val TARGET_SIZE = 1080
+        val TEMP_FILENAME = "input.jpg"
 
         init {
             System.loadLibrary("opencv_java3")
@@ -45,7 +49,6 @@ class MainActivity : AppCompatActivity() {
 
     private var coordinates: ArrayList<MatOfPoint>? = null
     private val disposables = CompositeDisposable()
-    private var currentPhotoPath: String = ""
     private lateinit var rxPermissions: RxPermissions
     private lateinit var bitmap: Bitmap
     private lateinit var paint: Paint
@@ -54,7 +57,6 @@ class MainActivity : AppCompatActivity() {
     private var right: Float = 0f
     private var top: Float = 0f
     private var bottom: Float = 0f
-
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -67,7 +69,7 @@ class MainActivity : AppCompatActivity() {
         paint = Paint()
         paint.color = Color.BLACK
         paint.isAntiAlias = true
-        paint.strokeWidth = 15f
+        paint.strokeWidth = 20f
         paint.style = Paint.Style.STROKE
         paint.pathEffect = null
         paint.strokeCap = Paint.Cap.ROUND
@@ -97,6 +99,7 @@ class MainActivity : AppCompatActivity() {
                 event.action == MotionEvent.ACTION_MOVE -> {
                     Log.v("grabcut", "Dragging $xScaled, $yScaled")
                     coordinates?.add(MatOfPoint(Point(xScaled.toDouble(), yScaled.toDouble())))
+                    coordinates?.add(MatOfPoint(Point(xScaled.toDouble(), yScaled.toDouble())))
                     path.lineTo(xScaled, yScaled)
                     left = Math.min(xScaled, left)
                     right = Math.max(xScaled, right)
@@ -104,6 +107,7 @@ class MainActivity : AppCompatActivity() {
                     bottom = Math.max(xScaled, bottom)
                 }
                 event.action == MotionEvent.ACTION_UP -> {
+                    coordinates?.add(MatOfPoint(Point(xScaled.toDouble(), yScaled.toDouble())))
                     path.close()
                     startCutting()
                 }
@@ -121,10 +125,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Auto-load previous image
-        val uri = loadUri()
-        if (uri != null) {
-            // FIXME: disabled, permission error
-            // loadPicture(uri)
+        val input = File(filesDir, TEMP_FILENAME)
+        if (input.exists()) {
+            loadPictureFromPath(input.absolutePath, false)
+        } else {
+            loadPictureFromAssets("sample.jpg")
         }
     }
 
@@ -134,44 +139,68 @@ class MainActivity : AppCompatActivity() {
         return true
     }
 
-    private fun decodeBitmapFromFilePath(currentPhotoPath: String): Bitmap {
-        val bmOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeFile(currentPhotoPath, bmOptions)
-        bmOptions.apply {
-            inJustDecodeBounds = false
-            inPurgeable = true
-        }
-        return BitmapFactory.decodeFile(currentPhotoPath, bmOptions)
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent) {
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         when (requestCode) {
-            REQUEST_OPEN_IMAGE -> if (resultCode == Activity.RESULT_OK && data.data != null) {
-                loadPicture(data.data)
+            REQUEST_OPEN_IMAGE -> if (resultCode == Activity.RESULT_OK && data?.data != null) {
+                loadPictureFromUri(data.data)
             }
         }
     }
 
-    private fun loadPicture(data: Uri) {
-        saveUri(data)
+    private fun decodeBitmapFromFilePath(currentPhotoPath: String): Bitmap {
+        // Figure out size of bitmap
+        val bmOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(currentPhotoPath, bmOptions)
+        // Find smallest size that is > 1080px
+        var inSampleSize = 1
+        var factor = 1.0
+        while (bmOptions.outWidth / factor > TARGET_SIZE
+                && bmOptions.outHeight / factor > TARGET_SIZE) {
+            inSampleSize++
+            factor *= 2
+        }
+        if (inSampleSize > 1) inSampleSize--
+
+        // Load bitmap
+        bmOptions.apply {
+            inJustDecodeBounds = false
+            this.inSampleSize = inSampleSize
+        }
+        return BitmapFactory.decodeFile(currentPhotoPath, bmOptions)
+    }
+
+    private fun loadPictureFromUri(data: Uri) {
         val imgUri: Uri = data
         val filePathColumn = arrayOf(MediaStore.Images.Media.DATA)
         val cursor = contentResolver.query(imgUri, filePathColumn, null, null, null)
         // TODO: Provide complex object that has both path and extension
-        currentPhotoPath = cursor.moveToFirst()
+        val path = cursor.moveToFirst()
                 .let { cursor.getString(cursor.getColumnIndex(filePathColumn[0])) }
                 .also { cursor.close() }
-        bitmap = decodeBitmapFromFilePath(currentPhotoPath)
+        loadPictureFromPath(path)
+    }
+
+    private fun loadPictureFromPath(photoPath: String, saveAfterLoad: Boolean = true) {
+        bitmap = decodeBitmapFromFilePath(photoPath)
         image.setImageBitmap(bitmap)
+        if (saveAfterLoad) {
+            saveResized(bitmap)
+        }
     }
 
-    private fun saveUri(data: Uri) {
-        getSharedPreferences("prefs", Context.MODE_PRIVATE).edit().putString("uri", data.toString()).apply()
+    private fun loadPictureFromAssets(photoPath: String) {
+        bitmap = BitmapFactory.decodeStream(assets.open(photoPath))
+        image.setImageBitmap(bitmap)
+        saveResized(bitmap)
     }
 
-    private fun loadUri(): Uri? {
-        val str = getSharedPreferences("prefs", Context.MODE_PRIVATE).getString("uri", null) ?: return null
-        return Uri.parse(str)
+    private fun saveResized(bitmap: Bitmap) {
+        try {
+            val out = FileOutputStream(File(filesDir, TEMP_FILENAME))
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+        } catch (e: Exception) {
+            Log.e("grabcut", "Unable to save source file", e)
+        }
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
@@ -209,7 +238,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun startCutting() {
         if (isPhotoChosen() && isTargetChosen()) {
-            Single.fromCallable { extractForegroundFromBackground(coordinates!!, currentPhotoPath) }
+            Single.fromCallable { extractForegroundFromBackground(coordinates!!, File(filesDir, TEMP_FILENAME)) }
                     .subscribeOn(Schedulers.computation())
                     .observeOn(AndroidSchedulers.mainThread())
                     .doOnSubscribe { vg_loading.visibility = VISIBLE }
@@ -232,22 +261,22 @@ class MainActivity : AppCompatActivity() {
         coordinates = null
     }
 
-    private fun isPhotoChosen() = currentPhotoPath.isNotBlank()
+    private fun isPhotoChosen() = File(filesDir, TEMP_FILENAME).exists()
 
     private fun isTargetChosen() = coordinates != null && coordinates!!.isNotEmpty()
 
-    private fun displayResult(currentPhotoPath: String) {
+    private fun displayResult(photoPath: String) {
         // TODO: Provide complex object that has both path and extension
         image.apply {
             scaleType = ImageView.ScaleType.CENTER_INSIDE
             adjustViewBounds = true
-            bitmap = BitmapFactory.decodeFile(currentPhotoPath + "_tmp.jpg")
+            bitmap = BitmapFactory.decodeFile(photoPath + "_4_final.jpg")
             setImageBitmap(bitmap)
             invalidate()
         }
     }
 
-    private fun extractForegroundFromBackground(coordinates: ArrayList<MatOfPoint>, currentPhotoPath: String): String {
+    private fun extractForegroundFromBackground(coordinates: ArrayList<MatOfPoint>, currentPhotoPath: File): String {
         // TODO: Provide complex object that has both path and extension
 
         val startTime = System.currentTimeMillis()
@@ -256,7 +285,7 @@ class MainActivity : AppCompatActivity() {
         val bgModel = Mat()
         val fgModel = Mat()
 
-        val srcImage = Imgcodecs.imread(currentPhotoPath)
+        val srcImage = Imgcodecs.imread(currentPhotoPath.absolutePath)
         val iterations = 5
 
         // Mask image where we specify which areas are background, foreground or probable background/foreground
@@ -264,9 +293,12 @@ class MainActivity : AppCompatActivity() {
                 Size(srcImage.cols().toDouble(), srcImage.rows().toDouble()),
                 CvType.CV_8UC1)
         // Fill mask with 'background'
-        Imgproc.rectangle(firstMask, Point(0.0, 0.0), Point(firstMask.cols().toDouble(), firstMask.rows().toDouble()), Scalar(Imgproc.GC_BGD.toDouble()))
+        Imgproc.rectangle(firstMask, Point(0.0, 0.0), Point(firstMask.cols().toDouble(), firstMask.rows().toDouble()), Scalar(Imgproc.GC_PR_BGD.toDouble()))
+        // Fill the polygon with 'foreground'
+        Imgproc.fillPoly(firstMask, coordinates, Scalar(Imgproc.GC_FGD.toDouble()))
         // Draw the polygon, as 'probably foreground'
-        Imgproc.polylines(firstMask, coordinates, true, Scalar(Imgproc.GC_PR_FGD.toDouble()))
+        Imgproc.polylines(firstMask, coordinates, true, Scalar(Imgproc.GC_PR_FGD.toDouble()), 20)
+        Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_1_firstmask.jpg", firstMask)
 
         val source = Mat(1, 1, CvType.CV_8U, Scalar(Imgproc.GC_PR_FGD.toDouble()))
         val rect = Rect(
@@ -295,9 +327,11 @@ class MainActivity : AppCompatActivity() {
                 Point(left.toDouble(), top.toDouble()),
                 Point(right.toDouble(), bottom.toDouble()),
                 color)
+        Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_2_foreground.jpg", firstMask)
 
         // Create a new matrix to represent the background, filled with white color
         val background = Mat(srcImage.size(), CvType.CV_8UC3, Scalar(255.0, 255.0, 255.0))
+        Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_3_background.jpg", firstMask)
 
         val mask = Mat(foreground.size(), CvType.CV_8UC1, Scalar(255.0, 255.0, 255.0))
         // Convert the foreground's color space from BGR to gray scale
@@ -319,8 +353,7 @@ class MainActivity : AppCompatActivity() {
         Core.add(background, foreground, dst, mask)
 
         // Save the final image to storage
-        Imgcodecs.imwrite(currentPhotoPath + "_tmp.jpg", dst)
-//        Imgcodecs.imwrite(currentPhotoPath + "_tmp.jpg", firstMask)
+        Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_4_final.jpg", dst)
 
         // Clean up used resources
         firstMask.release()
@@ -333,7 +366,7 @@ class MainActivity : AppCompatActivity() {
         val endTime = System.currentTimeMillis()
         Log.w("grabcut", "Operation took " + ((endTime - startTime) / 1000) + "s")
 
-        return currentPhotoPath
+        return currentPhotoPath.absolutePath
     }
 
     /**
