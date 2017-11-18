@@ -47,7 +47,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private var coordinates: ArrayList<MatOfPoint>? = null
+    private var coordinates: ArrayList<Point>? = null
     private val disposables = CompositeDisposable()
     private lateinit var rxPermissions: RxPermissions
     private lateinit var bitmap: Bitmap
@@ -87,7 +87,7 @@ class MainActivity : AppCompatActivity() {
                 event.action == MotionEvent.ACTION_DOWN -> {
                     if (coordinates == null) {
                         coordinates = ArrayList()
-                        coordinates!!.add(MatOfPoint(Point(xScaled.toDouble(), yScaled.toDouble())))
+                        coordinates!!.add(Point(xScaled.toDouble(), yScaled.toDouble()))
                         path = Path()
                         path.moveTo(xScaled, yScaled)
                         top = yScaled
@@ -98,8 +98,8 @@ class MainActivity : AppCompatActivity() {
                 }
                 event.action == MotionEvent.ACTION_MOVE -> {
                     Log.v("grabcut", "Dragging $xScaled, $yScaled")
-                    coordinates?.add(MatOfPoint(Point(xScaled.toDouble(), yScaled.toDouble())))
-                    coordinates?.add(MatOfPoint(Point(xScaled.toDouble(), yScaled.toDouble())))
+                    coordinates?.add(Point(xScaled.toDouble(), yScaled.toDouble()))
+                    coordinates?.add(Point(xScaled.toDouble(), yScaled.toDouble()))
                     path.lineTo(xScaled, yScaled)
                     left = Math.min(xScaled, left)
                     right = Math.max(xScaled, right)
@@ -107,7 +107,7 @@ class MainActivity : AppCompatActivity() {
                     bottom = Math.max(xScaled, bottom)
                 }
                 event.action == MotionEvent.ACTION_UP -> {
-                    coordinates?.add(MatOfPoint(Point(xScaled.toDouble(), yScaled.toDouble())))
+                    coordinates?.add(Point(xScaled.toDouble(), yScaled.toDouble()))
                     path.close()
                     startCutting()
                 }
@@ -276,10 +276,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun extractForegroundFromBackground(coordinates: ArrayList<MatOfPoint>, currentPhotoPath: File): String {
+    private fun extractForegroundFromBackground(coordinates: ArrayList<Point>, currentPhotoPath: File): String {
         // TODO: Provide complex object that has both path and extension
 
         val startTime = System.currentTimeMillis()
+        val colorBack = Scalar(Imgproc.GC_BGD.toDouble()) //Scalar(Imgproc.GC_PR_BGD.toDouble())
+        val colorOutline = Scalar(Imgproc.GC_PR_BGD.toDouble()) // Scalar(Imgproc.GC_PR_FGD.toDouble())
+        val colorInside = Scalar(Imgproc.GC_PR_FGD.toDouble()) // Scalar(Imgproc.GC_FGD.toDouble())
 
         // Matrices that OpenCV will be using internally
         val bgModel = Mat()
@@ -291,13 +294,16 @@ class MainActivity : AppCompatActivity() {
         // Mask image where we specify which areas are background, foreground or probable background/foreground
         val firstMask = Mat(
                 Size(srcImage.cols().toDouble(), srcImage.rows().toDouble()),
-                CvType.CV_8UC1)
-        // Fill mask with 'background'
-        Imgproc.rectangle(firstMask, Point(0.0, 0.0), Point(firstMask.cols().toDouble(), firstMask.rows().toDouble()), Scalar(Imgproc.GC_PR_BGD.toDouble()))
+                CvType.CV_8UC1, colorBack)
         // Fill the polygon with 'foreground'
-        Imgproc.fillPoly(firstMask, coordinates, Scalar(Imgproc.GC_FGD.toDouble()))
+        val mop = MatOfPoint().apply {
+            fromList(coordinates)
+        }
+        val mopList = ArrayList<MatOfPoint>()
+        mopList.add(mop)
+        Imgproc.fillPoly(firstMask, mopList, colorInside)
         // Draw the polygon, as 'probably foreground'
-        Imgproc.polylines(firstMask, coordinates, true, Scalar(Imgproc.GC_PR_FGD.toDouble()), 20)
+        Imgproc.polylines(firstMask, mopList, true, colorOutline, 20)
         Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_1_firstmask.jpg", firstMask)
 
         val source = Mat(1, 1, CvType.CV_8U, Scalar(Imgproc.GC_PR_FGD.toDouble()))
@@ -331,7 +337,7 @@ class MainActivity : AppCompatActivity() {
 
         // Create a new matrix to represent the background, filled with white color
         val background = Mat(srcImage.size(), CvType.CV_8UC3, Scalar(255.0, 255.0, 255.0))
-        Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_3_background.jpg", firstMask)
+        Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_3_background.jpg", background)
 
         val mask = Mat(foreground.size(), CvType.CV_8UC1, Scalar(255.0, 255.0, 255.0))
         // Convert the foreground's color space from BGR to gray scale
