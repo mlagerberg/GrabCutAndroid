@@ -6,11 +6,9 @@ A dummy app that demonstrates foreground-background segmentation using the GrabC
 
 ## To do:
 
-- [ ] perform 3px Median on input image before grabcutting
 - [ ] Offset the drawn polygon to 0,0 and crop the source image
 - [ ] Use findContours to pick the largest contour in the mask
 - [ ] Perform poor man's anti-aliasing by rendering the contour on a 4x upscaled mask and resize down the cut image. 
-- [ ] Remove all the unnecessary native libraries
 
 ## Project dependencies:
 - Kotlin 1.51.1

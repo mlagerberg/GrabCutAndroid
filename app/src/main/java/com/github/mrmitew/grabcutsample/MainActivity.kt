@@ -40,8 +40,10 @@ class MainActivity : AppCompatActivity() {
     companion object {
         val REQUEST_OPEN_IMAGE = 1337
         val TARGET_SIZE = 1080
-        val LINE_WIDTH = 30
+        val LINE_WIDTH = 15
         val TEMP_FILENAME = "input.jpg"
+        val GRABCUT_ITERATIONS = 5
+        val MEDIAN_BLUR_SIZE = 3
 
         init {
             System.loadLibrary("opencv_java3")
@@ -289,7 +291,6 @@ class MainActivity : AppCompatActivity() {
         val fgModel = Mat()
 
         val srcImage = Imgcodecs.imread(currentPhotoPath.absolutePath)
-        val iterations = 5
 
         // Mask image where we specify which areas are background, foreground or probable background/foreground
         val firstMask = Mat(
@@ -311,9 +312,13 @@ class MainActivity : AppCompatActivity() {
                 Point(left.toDouble(), top.toDouble()),
                 Point(right.toDouble(), bottom.toDouble()))
 
+        val median = srcImage.clone()
+        Imgproc.medianBlur(median, srcImage, MEDIAN_BLUR_SIZE)
+        median.release()
+
         // Run the grab cut algorithm with a rectangle (for subsequent iterations with touch-up strokes,
         // flag should be Imgproc.GC_INIT_WITH_MASK)
-        Imgproc.grabCut(srcImage, firstMask, rect, bgModel, fgModel, iterations, Imgproc.GC_INIT_WITH_MASK)
+        Imgproc.grabCut(srcImage, firstMask, rect, bgModel, fgModel, GRABCUT_ITERATIONS, Imgproc.GC_INIT_WITH_MASK)
 
         // Create a matrix of 0s and 1s, indicating whether individual pixels are equal
         // or different between "firstMask" and "source" objects
