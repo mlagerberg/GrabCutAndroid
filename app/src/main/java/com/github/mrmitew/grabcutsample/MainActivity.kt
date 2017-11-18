@@ -40,6 +40,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         val REQUEST_OPEN_IMAGE = 1337
         val TARGET_SIZE = 1080
+        val LINE_WIDTH = 30
         val TEMP_FILENAME = "input.jpg"
 
         init {
@@ -69,7 +70,7 @@ class MainActivity : AppCompatActivity() {
         paint = Paint()
         paint.color = Color.BLACK
         paint.isAntiAlias = true
-        paint.strokeWidth = 20f
+        paint.strokeWidth = LINE_WIDTH.toFloat()
         paint.style = Paint.Style.STROKE
         paint.pathEffect = null
         paint.strokeCap = Paint.Cap.ROUND
@@ -97,7 +98,6 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 event.action == MotionEvent.ACTION_MOVE -> {
-                    Log.v("grabcut", "Dragging $xScaled, $yScaled")
                     coordinates?.add(Point(xScaled.toDouble(), yScaled.toDouble()))
                     coordinates?.add(Point(xScaled.toDouble(), yScaled.toDouble()))
                     path.lineTo(xScaled, yScaled)
@@ -282,7 +282,7 @@ class MainActivity : AppCompatActivity() {
         val startTime = System.currentTimeMillis()
         val colorBack = Scalar(Imgproc.GC_BGD.toDouble()) //Scalar(Imgproc.GC_PR_BGD.toDouble())
         val colorOutline = Scalar(Imgproc.GC_PR_BGD.toDouble()) // Scalar(Imgproc.GC_PR_FGD.toDouble())
-        val colorInside = Scalar(Imgproc.GC_PR_FGD.toDouble()) // Scalar(Imgproc.GC_FGD.toDouble())
+        val colorInside = Scalar(Imgproc.GC_FGD.toDouble()) // Scalar(Imgproc.GC_FGD.toDouble())
 
         // Matrices that OpenCV will be using internally
         val bgModel = Mat()
@@ -295,18 +295,18 @@ class MainActivity : AppCompatActivity() {
         val firstMask = Mat(
                 Size(srcImage.cols().toDouble(), srcImage.rows().toDouble()),
                 CvType.CV_8UC1, colorBack)
-        // Fill the polygon with 'foreground'
+        // Fill the polygon
         val mop = MatOfPoint().apply {
             fromList(coordinates)
         }
         val mopList = ArrayList<MatOfPoint>()
         mopList.add(mop)
         Imgproc.fillPoly(firstMask, mopList, colorInside)
-        // Draw the polygon, as 'probably foreground'
-        Imgproc.polylines(firstMask, mopList, true, colorOutline, 20)
+        // Draw the fat polygon outline
+        Imgproc.polylines(firstMask, mopList, true, colorOutline, LINE_WIDTH)
         Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_1_firstmask.jpg", firstMask)
 
-        val source = Mat(1, 1, CvType.CV_8U, Scalar(Imgproc.GC_PR_FGD.toDouble()))
+        val source = Mat(1, 1, CvType.CV_8U, colorInside)
         val rect = Rect(
                 Point(left.toDouble(), top.toDouble()),
                 Point(right.toDouble(), bottom.toDouble()))
