@@ -105,8 +105,8 @@ class MainActivity : AppCompatActivity() {
                     path.lineTo(xScaled, yScaled)
                     left = Math.min(xScaled, left)
                     right = Math.max(xScaled, right)
-                    top = Math.min(xScaled, top)
-                    bottom = Math.max(xScaled, bottom)
+                    top = Math.min(yScaled, top)
+                    bottom = Math.max(yScaled, bottom)
                 }
                 event.action == MotionEvent.ACTION_UP -> {
                     coordinates?.add(Point(xScaled.toDouble(), yScaled.toDouble()))
@@ -290,12 +290,30 @@ class MainActivity : AppCompatActivity() {
         val bgModel = Mat()
         val fgModel = Mat()
 
+        // Load source again
         val srcImage = Imgcodecs.imread(currentPhotoPath.absolutePath)
+
+        // Bounding box of the polyline
+        left = Math.max(0f, left - LINE_WIDTH * .5f)
+        top = Math.max(0f, top - LINE_WIDTH * .5f)
+        right = Math.min(srcImage.width().toFloat(), right + LINE_WIDTH * .5f)
+        bottom = Math.min(srcImage.height().toFloat(), bottom + LINE_WIDTH * .5f)
+        val rect = Rect(
+                Point(left.toDouble(), top.toDouble()),
+                Point(right.toDouble(), bottom.toDouble()))
 
         // Mask image where we specify which areas are background, foreground or probable background/foreground
         val firstMask = Mat(
-                Size(srcImage.cols().toDouble(), srcImage.rows().toDouble()),
+                //Size(srcImage.cols().toDouble(), srcImage.rows().toDouble()),
+                rect.size(),
                 CvType.CV_8UC1, colorBack)
+        // Offset all coordinates
+        coordinates.forEach { point: Point ->
+            run {
+                point.x -= left
+                point.y -= top
+            }
+        }
         // Fill the polygon
         val mop = MatOfPoint().apply {
             fromList(coordinates)
@@ -308,17 +326,15 @@ class MainActivity : AppCompatActivity() {
         Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_1_firstmask.jpg", firstMask)
 
         val source = Mat(1, 1, CvType.CV_8U, colorInside)
-        val rect = Rect(
-                Point(left.toDouble(), top.toDouble()),
-                Point(right.toDouble(), bottom.toDouble()))
-
-        val median = srcImage.clone()
-        Imgproc.medianBlur(median, srcImage, MEDIAN_BLUR_SIZE)
-        median.release()
+        val cropped = Mat(srcImage, rect)
+        srcImage.release()
+        val median = cropped.clone()
+        Imgproc.medianBlur(cropped, median, MEDIAN_BLUR_SIZE)
+        cropped.release()
 
         // Run the grab cut algorithm with a rectangle (for subsequent iterations with touch-up strokes,
         // flag should be Imgproc.GC_INIT_WITH_MASK)
-        Imgproc.grabCut(srcImage, firstMask, rect, bgModel, fgModel, GRABCUT_ITERATIONS, Imgproc.GC_INIT_WITH_MASK)
+        Imgproc.grabCut(median, firstMask, rect, bgModel, fgModel, GRABCUT_ITERATIONS, Imgproc.GC_INIT_WITH_MASK)
 
         // Create a matrix of 0s and 1s, indicating whether individual pixels are equal
         // or different between "firstMask" and "source" objects
@@ -326,22 +342,22 @@ class MainActivity : AppCompatActivity() {
         Core.compare(firstMask, source, firstMask, Core.CMP_EQ)
 
         // Create a matrix to represent the foreground, filled with white color
-        val foreground = Mat(srcImage.size(), CvType.CV_8UC3, Scalar(255.0, 255.0, 255.0))
+        val foreground = Mat(median.size(), CvType.CV_8UC3, Scalar(255.0, 255.0, 255.0))
 
         // Copy the foreground matrix to the first mask
-        srcImage.copyTo(foreground, firstMask)
+        median.copyTo(foreground, firstMask)
 
         // Create a red color
-        val color = Scalar(255.0, 0.0, 0.0, 255.0)
+//        val color = Scalar(255.0, 0.0, 0.0, 255.0)
         // Draw a rectangle using the coordinates of the bounding box that surrounds the foreground
-        Imgproc.rectangle(srcImage,
-                Point(left.toDouble(), top.toDouble()),
-                Point(right.toDouble(), bottom.toDouble()),
-                color)
+//        Imgproc.rectangle(srcImage,
+//                Point(left.toDouble(), top.toDouble()),
+//                Point(right.toDouble(), bottom.toDouble()),
+//                color)
         Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_2_foreground.jpg", firstMask)
 
         // Create a new matrix to represent the background, filled with white color
-        val background = Mat(srcImage.size(), CvType.CV_8UC3, Scalar(255.0, 255.0, 255.0))
+        val background = Mat(median.size(), CvType.CV_8UC3, Scalar(255.0, 255.0, 255.0))
         Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_3_background.jpg", background)
 
         val mask = Mat(foreground.size(), CvType.CV_8UC1, Scalar(255.0, 255.0, 255.0))

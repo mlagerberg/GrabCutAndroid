@@ -6,7 +6,6 @@ A dummy app that demonstrates foreground-background segmentation using the GrabC
 
 ## To do:
 
-- [ ] Offset the drawn polygon to 0,0 and crop the source image
 - [ ] Use findContours to pick the largest contour in the mask
 - [ ] Perform poor man's anti-aliasing by rendering the contour on a 4x upscaled mask and resize down the cut image. 
 
