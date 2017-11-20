@@ -42,7 +42,7 @@ public class OverlayView extends View {
     public synchronized void draw(final Canvas canvas) {
         super.draw(canvas);
         for (final DrawCallback callback : callbacks) {
-            callback.drawCallback(canvas);
+            callback.draw(canvas);
         }
     }
 
@@ -51,6 +51,22 @@ public class OverlayView extends View {
      */
     public interface DrawCallback {
 
-        void drawCallback(final Canvas canvas);
+        void draw(final Canvas canvas);
+    }
+
+    abstract public static class TimedDrawCallback implements DrawCallback {
+
+        private long mPrevTimestamp = -1;
+
+        @Override
+        public void draw(Canvas canvas) {
+            long now = System.currentTimeMillis();
+            long timeSinceLastFrame = mPrevTimestamp < 0 ? -1 : (System.currentTimeMillis() - mPrevTimestamp);
+            mPrevTimestamp = now;
+            draw(canvas, timeSinceLastFrame);
+        }
+
+        public void draw(Canvas canvas, long millisSinceLastFrame) {
+        }
     }
 }

@@ -45,8 +45,8 @@ class MainActivity : AppCompatActivity() {
         val GRABCUT_ITERATIONS = 3
         val MEDIAN_BLUR_SIZE = 3
         val STORE_DEBUG_IMAGES = true
-        val DASHES_ALT_OFFSET = 10f
-        val DASHES = floatArrayOf(DASHES_ALT_OFFSET, DASHES_ALT_OFFSET)
+        val DASHES_LENGTH = 10f
+        val DASHES = floatArrayOf(DASHES_LENGTH, DASHES_LENGTH)
 
         init {
             System.loadLibrary("opencv_java3")
@@ -99,7 +99,7 @@ class MainActivity : AppCompatActivity() {
         paintAnts[0].color = Color.CYAN
         paintAnts[0].pathEffect = DashPathEffect(DASHES, antsPhase)
         paintAnts[1].color = Color.MAGENTA
-        paintAnts[1].pathEffect = DashPathEffect(DASHES, antsPhase + DASHES_ALT_OFFSET)
+        paintAnts[1].pathEffect = DashPathEffect(DASHES, antsPhase + DASHES_LENGTH)
 
         image.setOnTouchListener { _, event ->
             if (!isPhotoChosen()) {
@@ -151,21 +151,27 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Overlay (for marching ants)
-        overlay.addCallback { canvas ->
-            //            canvas.drawLine(0f, 0f, canvas.width.toFloat(), canvas.height.toFloat(), paint)
-            if (pathAnts != null) {
-                paintAnts.forEach {
-                    canvas.drawPath(pathAnts!!, it)
+        overlay.addCallback(object : OverlayView.TimedDrawCallback() {
+            override fun draw(canvas: Canvas, elapsed: Long) {
+                // Draw the ants
+                if (pathAnts != null) {
+                    paintAnts.forEach {
+                        canvas.drawPath(pathAnts!!, it)
+                    }
                 }
-            }
 
-            overlay.postDelayed({
-                antsPhase += 1f // FIXME move by time, not step, for smooth animation
-                paintAnts[0].pathEffect = DashPathEffect(DASHES, antsPhase)
-                paintAnts[1].pathEffect = DashPathEffect(DASHES, antsPhase + DASHES_ALT_OFFSET)
-                overlay.invalidate()
-            }, 100)
-        }
+                // March forward every so many milliseconds (~ 60fps)
+                overlay.postDelayed({
+                    if (elapsed > 0) {
+                        antsPhase += (elapsed * 58.9f) * 0.34f // March 0.34 every 17 ms
+                    }
+                    // Unfortunately, there's no way to adjust the phase except by making a new DashPathEffect
+                    paintAnts[0].pathEffect = DashPathEffect(DASHES, antsPhase)
+                    paintAnts[1].pathEffect = DashPathEffect(DASHES, antsPhase + DASHES_LENGTH)
+                    overlay.invalidate()
+                }, 17)
+            }
+        })
 
         // Auto-load previous image
         val input = File(filesDir, TEMP_FILENAME)
