@@ -33,24 +33,25 @@ import org.opencv.imgproc.Imgproc
 import java.io.File
 import java.io.FileOutputStream
 
+typealias Coordinates = ArrayList<Point>
 
-typealias Coordinates = Pair<Point, Point>
 class MainActivity : AppCompatActivity() {
 
     companion object {
         val REQUEST_OPEN_IMAGE = 1337
         val TARGET_SIZE = 1080
-        val LINE_WIDTH = 15
+        val LINE_WIDTH = 20
         val TEMP_FILENAME = "input.jpg"
         val GRABCUT_ITERATIONS = 5
         val MEDIAN_BLUR_SIZE = 3
+        val STORE_DEBUG_IMAGES = true
 
         init {
             System.loadLibrary("opencv_java3")
         }
     }
 
-    private var coordinates: ArrayList<Point>? = null
+    private var coordinates: Coordinates? = null
     private val disposables = CompositeDisposable()
     private lateinit var rxPermissions: RxPermissions
     private lateinit var bitmap: Bitmap
@@ -278,12 +279,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun extractForegroundFromBackground(coordinates: ArrayList<Point>, currentPhotoPath: File): String {
+    private fun extractForegroundFromBackground(coordinates: Coordinates, currentPhotoPath: File): String {
         // TODO: Provide complex object that has both path and extension
 
         val startTime = System.currentTimeMillis()
         val colorBack = Scalar(Imgproc.GC_BGD.toDouble()) //Scalar(Imgproc.GC_PR_BGD.toDouble())
-        val colorOutline = Scalar(Imgproc.GC_PR_BGD.toDouble()) // Scalar(Imgproc.GC_PR_FGD.toDouble())
+        val colorInnerStroke = Scalar(Imgproc.GC_PR_FGD.toDouble()) // Scalar(Imgproc.GC_PR_FGD.toDouble())
+        val colorOuterStroke = Scalar(Imgproc.GC_PR_BGD.toDouble()) // Scalar(Imgproc.GC_PR_FGD.toDouble())
         val colorInside = Scalar(Imgproc.GC_FGD.toDouble()) // Scalar(Imgproc.GC_FGD.toDouble())
 
         // Matrices that OpenCV will be using internally
@@ -302,11 +304,6 @@ class MainActivity : AppCompatActivity() {
                 Point(left.toDouble(), top.toDouble()),
                 Point(right.toDouble(), bottom.toDouble()))
 
-        // Mask image where we specify which areas are background, foreground or probable background/foreground
-        val firstMask = Mat(
-                //Size(srcImage.cols().toDouble(), srcImage.rows().toDouble()),
-                rect.size(),
-                CvType.CV_8UC1, colorBack)
         // Offset all coordinates
         coordinates.forEach { point: Point ->
             run {
@@ -314,16 +311,32 @@ class MainActivity : AppCompatActivity() {
                 point.y -= top
             }
         }
-        // Fill the polygon
+
+        // Generate polyline
         val mop = MatOfPoint().apply {
             fromList(coordinates)
         }
         val mopList = ArrayList<MatOfPoint>()
         mopList.add(mop)
+
+        // Mask image where we specify which areas are background, foreground or probable background/foreground
+        val firstMask = Mat(
+                rect.size(),
+                CvType.CV_8UC1,
+                colorBack)
+
+        // Outer stroke (3px 'probably background')
+        Imgproc.polylines(firstMask, mopList, true, colorOuterStroke, LINE_WIDTH + 6)
+        // Inner stroke, first pass (10px on the outside of the hand-drawn path)
+        Imgproc.polylines(firstMask, mopList, true, colorInnerStroke, LINE_WIDTH)
+        // Fill the polygon
         Imgproc.fillPoly(firstMask, mopList, colorInside)
-        // Draw the fat polygon outline
-        Imgproc.polylines(firstMask, mopList, true, colorOutline, LINE_WIDTH)
-        Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_1_firstmask.jpg", firstMask)
+        // Inner stroke, second pass (5px on the inside of the hand-drawn path)
+        Imgproc.polylines(firstMask, mopList, true, colorInnerStroke, LINE_WIDTH - 10)
+        // Save result
+        if (STORE_DEBUG_IMAGES) {
+            Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_1_firstmask.jpg", firstMask)
+        }
 
         val source = Mat(1, 1, CvType.CV_8U, colorInside)
         val cropped = Mat(srcImage, rect)
@@ -332,8 +345,7 @@ class MainActivity : AppCompatActivity() {
         Imgproc.medianBlur(cropped, median, MEDIAN_BLUR_SIZE)
         cropped.release()
 
-        // Run the grab cut algorithm with a rectangle (for subsequent iterations with touch-up strokes,
-        // flag should be Imgproc.GC_INIT_WITH_MASK)
+        // Run the grab cut algorithm with a mask
         Imgproc.grabCut(median, firstMask, rect, bgModel, fgModel, GRABCUT_ITERATIONS, Imgproc.GC_INIT_WITH_MASK)
 
         // Create a matrix of 0s and 1s, indicating whether individual pixels are equal
@@ -354,11 +366,15 @@ class MainActivity : AppCompatActivity() {
 //                Point(left.toDouble(), top.toDouble()),
 //                Point(right.toDouble(), bottom.toDouble()),
 //                color)
-        Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_2_foreground.jpg", firstMask)
+        if (STORE_DEBUG_IMAGES) {
+            Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_2_foreground.jpg", firstMask)
+        }
 
         // Create a new matrix to represent the background, filled with white color
         val background = Mat(median.size(), CvType.CV_8UC3, Scalar(255.0, 255.0, 255.0))
-        Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_3_background.jpg", background)
+        if (STORE_DEBUG_IMAGES) {
+            Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_3_background.jpg", background)
+        }
 
         val mask = Mat(foreground.size(), CvType.CV_8UC1, Scalar(255.0, 255.0, 255.0))
         // Convert the foreground's color space from BGR to gray scale
@@ -380,7 +396,9 @@ class MainActivity : AppCompatActivity() {
         Core.add(background, foreground, dst, mask)
 
         // Save the final image to storage
-        Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_4_final.jpg", dst)
+        if (STORE_DEBUG_IMAGES) {
+            Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_4_final.jpg", dst)
+        }
 
         // Clean up used resources
         firstMask.release()
