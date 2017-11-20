@@ -42,9 +42,11 @@ class MainActivity : AppCompatActivity() {
         val TARGET_SIZE = 1080
         val LINE_WIDTH = 20
         val TEMP_FILENAME = "input.jpg"
-        val GRABCUT_ITERATIONS = 5
+        val GRABCUT_ITERATIONS = 3
         val MEDIAN_BLUR_SIZE = 3
         val STORE_DEBUG_IMAGES = true
+        val DASHES_ALT_OFFSET = 10f
+        val DASHES = floatArrayOf(DASHES_ALT_OFFSET, DASHES_ALT_OFFSET)
 
         init {
             System.loadLibrary("opencv_java3")
@@ -57,6 +59,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var bitmap: Bitmap
     private lateinit var paint: Paint
     private lateinit var path: Path
+    private lateinit var paintAnts: Array<Paint>
+    private var pathAnts: Path? = null
+    private var antsPhase = 0f
     private var left: Float = 0f
     private var right: Float = 0f
     private var top: Float = 0f
@@ -71,13 +76,30 @@ class MainActivity : AppCompatActivity() {
         rxPermissions = RxPermissions(this)
 
         paint = Paint()
-        paint.color = Color.BLACK
+        paint.color = Color.WHITE
+        paint.alpha = 128
         paint.isAntiAlias = true
         paint.strokeWidth = LINE_WIDTH.toFloat()
         paint.style = Paint.Style.STROKE
         paint.pathEffect = null
         paint.strokeCap = Paint.Cap.ROUND
         paint.strokeJoin = Paint.Join.ROUND
+
+        fun initDashPaint(ignore: Int): Paint {
+            val p = Paint()
+            p.isAntiAlias = true
+            p.strokeWidth = 5f
+            p.style = Paint.Style.STROKE
+            p.strokeCap = Paint.Cap.BUTT
+            p.strokeJoin = Paint.Join.ROUND
+            return p
+        }
+
+        paintAnts = Array(2, ::initDashPaint)
+        paintAnts[0].color = Color.CYAN
+        paintAnts[0].pathEffect = DashPathEffect(DASHES, antsPhase)
+        paintAnts[1].color = Color.MAGENTA
+        paintAnts[1].pathEffect = DashPathEffect(DASHES, antsPhase + DASHES_ALT_OFFSET)
 
         image.setOnTouchListener { _, event ->
             if (!isPhotoChosen()) {
@@ -117,6 +139,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             // TODO move this to the ondraw of the view, instead of re-creating a new bitmap every time
+            // Or use the overlayview
             with(Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.RGB_565)) {
                 Canvas(this).apply {
                     drawBitmap(bitmap, 0f, 0f, null)
@@ -125,6 +148,23 @@ class MainActivity : AppCompatActivity() {
                 image.setImageDrawable(BitmapDrawable(resources, this))
             }
             true
+        }
+
+        // Overlay (for marching ants)
+        overlay.addCallback { canvas ->
+            //            canvas.drawLine(0f, 0f, canvas.width.toFloat(), canvas.height.toFloat(), paint)
+            if (pathAnts != null) {
+                paintAnts.forEach {
+                    canvas.drawPath(pathAnts!!, it)
+                }
+            }
+
+            overlay.postDelayed({
+                antsPhase += 1f // FIXME move by time, not step, for smooth animation
+                paintAnts[0].pathEffect = DashPathEffect(DASHES, antsPhase)
+                paintAnts[1].pathEffect = DashPathEffect(DASHES, antsPhase + DASHES_ALT_OFFSET)
+                overlay.invalidate()
+            }, 100)
         }
 
         // Auto-load previous image
@@ -283,10 +323,10 @@ class MainActivity : AppCompatActivity() {
         // TODO: Provide complex object that has both path and extension
 
         val startTime = System.currentTimeMillis()
-        val colorBack = Scalar(Imgproc.GC_BGD.toDouble()) //Scalar(Imgproc.GC_PR_BGD.toDouble())
-        val colorInnerStroke = Scalar(Imgproc.GC_PR_FGD.toDouble()) // Scalar(Imgproc.GC_PR_FGD.toDouble())
-        val colorOuterStroke = Scalar(Imgproc.GC_PR_BGD.toDouble()) // Scalar(Imgproc.GC_PR_FGD.toDouble())
-        val colorInside = Scalar(Imgproc.GC_FGD.toDouble()) // Scalar(Imgproc.GC_FGD.toDouble())
+        val colorBack = Scalar(Imgproc.GC_BGD.toDouble())
+        val colorInnerStroke = Scalar(Imgproc.GC_PR_FGD.toDouble())
+        val colorOuterStroke = Scalar(Imgproc.GC_PR_BGD.toDouble())
+        val colorInside = Scalar(Imgproc.GC_FGD.toDouble())
 
         // Matrices that OpenCV will be using internally
         val bgModel = Mat()
@@ -326,7 +366,7 @@ class MainActivity : AppCompatActivity() {
                 colorBack)
 
         // Outer stroke (3px 'probably background')
-        Imgproc.polylines(firstMask, mopList, true, colorOuterStroke, LINE_WIDTH + 6)
+        Imgproc.polylines(firstMask, mopList, true, colorOuterStroke, LINE_WIDTH + 8)
         // Inner stroke, first pass (10px on the outside of the hand-drawn path)
         Imgproc.polylines(firstMask, mopList, true, colorInnerStroke, LINE_WIDTH)
         // Fill the polygon
@@ -352,6 +392,28 @@ class MainActivity : AppCompatActivity() {
         // or different between "firstMask" and "source" objects
         // Result is stored back to "firstMask"
         Core.compare(firstMask, source, firstMask, Core.CMP_EQ)
+
+        // Locate contours in the mask
+        val contours = ArrayList<MatOfPoint>()
+        Imgproc.findContours(firstMask, contours, Mat(), Imgproc.RETR_LIST, Imgproc.CHAIN_APPROX_NONE)
+
+        if (contours.isNotEmpty()) {
+            val biggestContour = findBiggestContour(contours)
+            //contours = ArrayList()
+            if (biggestContour != null) {
+                //contours = Coordinates()
+                pathAnts = null
+                for (point in biggestContour.toArray()) {
+                    if (pathAnts == null) {
+                        pathAnts = Path()
+                        pathAnts!!.moveTo(point.x.toFloat(), point.y.toFloat())
+                    } else {
+                        pathAnts!!.lineTo(point.x.toFloat(), point.y.toFloat())
+                    }
+                }
+                pathAnts!!.close()
+            }
+        }
 
         // Create a matrix to represent the foreground, filled with white color
         val foreground = Mat(median.size(), CvType.CV_8UC3, Scalar(255.0, 255.0, 255.0))
@@ -412,6 +474,27 @@ class MainActivity : AppCompatActivity() {
         Log.w("grabcut", "Operation took " + ((endTime - startTime) / 1000) + "s")
 
         return currentPhotoPath.absolutePath
+    }
+
+    /**
+     * Returns the largest contour in the list, measured by area
+     */
+    private fun findBiggestContour(cont: ArrayList<MatOfPoint>): MatOfPoint? {
+        if (cont.isEmpty()) {
+            return null
+        }
+
+        var maxSize = 0.0
+        var maxIndex = -1
+        cont.forEachIndexed { i: Int, point: MatOfPoint ->
+            val size = Imgproc.contourArea(point)
+            if (size > maxSize) {
+                maxSize = size
+                maxIndex = i
+            }
+        }
+
+        return cont[maxIndex]
     }
 
     /**
