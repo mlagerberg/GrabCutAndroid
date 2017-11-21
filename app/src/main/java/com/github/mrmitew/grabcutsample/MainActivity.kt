@@ -384,7 +384,6 @@ class MainActivity : AppCompatActivity() {
             Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_1_firstmask.jpg", firstMask)
         }
 
-        val source = Mat(1, 1, CvType.CV_8U, colorInside)
         val cropped = Mat(srcImage, rect)
         srcImage.release()
         val median = cropped.clone()
@@ -397,11 +396,17 @@ class MainActivity : AppCompatActivity() {
         // Create a matrix of 0s and 1s, indicating whether individual pixels are equal
         // or different between "firstMask" and "source" objects
         // Result is stored back to "firstMask"
-        Core.compare(firstMask, source, firstMask, Core.CMP_EQ)
+        val newMask = Mat.zeros(firstMask.size(), CvType.CV_8U)
+        val source1 = Mat(1, 1, CvType.CV_8U, colorInside)
+        val source2 = Mat(1, 1, CvType.CV_8U, colorInnerStroke)
+        Core.compare(firstMask, source1, newMask, Core.CMP_EQ)
+        Core.compare(firstMask, source2, firstMask, Core.CMP_EQ)
+        Core.add(firstMask, newMask, newMask)
+        firstMask.release()
 
         // Locate contours in the mask
         val contours = ArrayList<MatOfPoint>()
-        Imgproc.findContours(firstMask, contours, Mat(), Imgproc.RETR_LIST, Imgproc.CHAIN_APPROX_NONE)
+        Imgproc.findContours(newMask, contours, Mat(), Imgproc.RETR_LIST, Imgproc.CHAIN_APPROX_NONE)
 
         if (contours.isNotEmpty()) {
             val biggestContour = findBiggestContour(contours)
@@ -469,8 +474,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Clean up used resources
-        firstMask.release()
-        source.release()
+        //firstMask.release()
+        //source.release()
         bgModel.release()
         fgModel.release()
         vals.release()
