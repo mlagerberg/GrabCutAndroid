@@ -319,7 +319,7 @@ class MainActivity : AppCompatActivity() {
         image.apply {
             scaleType = ImageView.ScaleType.CENTER_INSIDE
             adjustViewBounds = true
-            bitmap = BitmapFactory.decodeFile(photoPath + "_4_final.jpg")
+            bitmap = BitmapFactory.decodeFile(photoPath + "_result.png")
             setImageBitmap(bitmap)
             invalidate()
         }
@@ -333,10 +333,6 @@ class MainActivity : AppCompatActivity() {
         val colorInnerStroke = Scalar(Imgproc.GC_PR_FGD.toDouble())
         val colorOuterStroke = Scalar(Imgproc.GC_PR_BGD.toDouble())
         val colorInside = Scalar(Imgproc.GC_FGD.toDouble())
-
-        // Matrices that OpenCV will be using internally
-        val bgModel = Mat()
-        val fgModel = Mat()
 
         // Load source again
         val srcImage = Imgcodecs.imread(currentPhotoPath.absolutePath)
@@ -381,17 +377,26 @@ class MainActivity : AppCompatActivity() {
         Imgproc.polylines(firstMask, mopList, true, colorInnerStroke, LINE_WIDTH - 10)
         // Save result
         if (STORE_DEBUG_IMAGES) {
-            Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_1_firstmask.jpg", firstMask)
+            Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_1a_firstmask.jpg", firstMask)
         }
 
         val cropped = Mat(srcImage, rect)
         srcImage.release()
         val median = cropped.clone()
         Imgproc.medianBlur(cropped, median, MEDIAN_BLUR_SIZE)
-        cropped.release()
 
         // Run the grab cut algorithm with a mask
+        // Matrices that OpenCV will be using internally
+        val bgModel = Mat()
+        val fgModel = Mat()
         Imgproc.grabCut(median, firstMask, rect, bgModel, fgModel, GRABCUT_ITERATIONS, Imgproc.GC_INIT_WITH_MASK)
+        median.release()
+        bgModel.release()
+        fgModel.release()
+
+        if (STORE_DEBUG_IMAGES) {
+            Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_1b_secondmask.jpg", firstMask)
+        }
 
         // Create a matrix of 0s and 1s, indicating whether individual pixels are equal
         // or different between "firstMask" and "source" objects
@@ -403,6 +408,9 @@ class MainActivity : AppCompatActivity() {
         Core.compare(firstMask, source2, firstMask, Core.CMP_EQ)
         Core.add(firstMask, newMask, newMask)
         firstMask.release()
+        if (STORE_DEBUG_IMAGES) {
+            Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_1c_finalmask.jpg", newMask)
+        }
 
         // Locate contours in the mask
         val contours = ArrayList<MatOfPoint>()
@@ -426,60 +434,24 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Create a matrix to represent the foreground, filled with white color
-        val foreground = Mat(median.size(), CvType.CV_8UC3, Scalar(255.0, 255.0, 255.0))
+        // Create a matrix to represent the foreground, filled with 0% alpha
+        val alpha = Scalar(255.0, 255.0, 255.0, 0.0)
+        val foreground = Mat(cropped.size(), CvType.CV_8UC4, alpha)
+        // Convert to 4-channel (RGBA) color space
+        //cropped.convertTo(foreground, CvType.CV_8UC4)
+        Imgproc.cvtColor(cropped, foreground, Imgproc.COLOR_BGR2BGRA)
+        cropped.release()
 
-        // Copy the foreground matrix to the first mask
-        median.copyTo(foreground, firstMask)
+        // Invert mask
+        Core.bitwise_not(newMask, newMask)
+        // Set alpha = 0 on all white pixels in the inverted mask
+        foreground.setTo(alpha, newMask)
 
-        // Create a red color
-//        val color = Scalar(255.0, 0.0, 0.0, 255.0)
-        // Draw a rectangle using the coordinates of the bounding box that surrounds the foreground
-//        Imgproc.rectangle(srcImage,
-//                Point(left.toDouble(), top.toDouble()),
-//                Point(right.toDouble(), bottom.toDouble()),
-//                color)
-        if (STORE_DEBUG_IMAGES) {
-            Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_2_foreground.jpg", firstMask)
-        }
-
-        // Create a new matrix to represent the background, filled with white color
-        val background = Mat(median.size(), CvType.CV_8UC3, Scalar(255.0, 255.0, 255.0))
-        if (STORE_DEBUG_IMAGES) {
-            Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_3_background.jpg", background)
-        }
-
-        val mask = Mat(foreground.size(), CvType.CV_8UC1, Scalar(255.0, 255.0, 255.0))
-        // Convert the foreground's color space from BGR to gray scale
-        Imgproc.cvtColor(foreground, mask, Imgproc.COLOR_BGR2GRAY)
-
-        // Separate out regions of the mask by comparing the pixel intensity with respect to a threshold value
-        Imgproc.threshold(mask, mask, 254.0, 255.0, Imgproc.THRESH_BINARY_INV)
-
-        // Create a matrix to hold the final image
-        val dst = Mat()
-        // copy the background matrix onto the matrix that represents the final result
-        background.copyTo(dst)
-
-        val vals = Mat(1, 1, CvType.CV_8UC3, Scalar(0.0))
-        // Replace all 0 values in the background matrix given the foreground mask
-        background.setTo(vals, mask)
-
-        // Add the sum of the background and foreground matrices by applying the mask
-        Core.add(background, foreground, dst, mask)
-
-        // Save the final image to storage
-        if (STORE_DEBUG_IMAGES) {
-            Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_4_final.jpg", dst)
-        }
+        Imgcodecs.imwrite(currentPhotoPath.absolutePath + "_result.png", foreground)
 
         // Clean up used resources
-        //firstMask.release()
-        //source.release()
-        bgModel.release()
-        fgModel.release()
-        vals.release()
-        dst.release()
+        foreground.release()
+        newMask.release()
 
         val endTime = System.currentTimeMillis()
         Log.w("grabcut", "Operation took " + ((endTime - startTime) / 1000) + "s")
